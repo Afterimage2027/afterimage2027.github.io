@@ -95,7 +95,7 @@
   .madness { position: fixed; inset: 0; z-index: 1; overflow: hidden; pointer-events: none; }
   .madness span {
     position: absolute; white-space: nowrap; line-height: 1;
-    color: rgba(255, 255, 255, .012); /* quasi invisible ; « transparent » empêcherait la sélection de le colorer */
+    color: rgba(0, 0, 0, .004); /* noir à 1/255 sur fond sombre : invisible ; « transparent » empêcherait la sélection de le colorer */
     transform-origin: center;
   }
   .madness span::selection {
@@ -217,7 +217,7 @@ function fadeTo(target, ms) {
 }
 function setSound(v) {
   on = v;
-  if (v) { bg.play().catch(() => {}); fadeTo(0.8, 2500); }
+  if (v) { bg.play().catch(() => {}); fadeTo(0.15, 3000); }
   else fadeTo(0, 800);
   $('sound').textContent = v ? '🔊 Pluie' : '🔇 Son coupé';
 }
