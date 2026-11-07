@@ -24,7 +24,6 @@
     overflow: hidden;
   }
   canvas#rain { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; }
-  .flash { position: fixed; inset: 0; background: #cfd8ff; opacity: 0; pointer-events: none; z-index: 1; }
   main {
     position: relative; z-index: 2;
     min-height: 100%;
@@ -92,7 +91,6 @@
 </head>
 <body>
 <canvas id="rain"></canvas>
-<div class="flash" id="flash"></div>
 
 <main>
   <img class="logo" src="logo.png" alt="AFTERIMAGE">
@@ -109,7 +107,7 @@
 
 <div class="enter" id="enter">
   <span>ENTRER</span>
-  <small>Cliquez pour entendre la pluie</small>
+  <small>Cliquez pour entendre la forêt sous la pluie</small>
 </div>
 
 <script>
@@ -162,70 +160,103 @@ function draw() {
 }
 addEventListener('resize', resize); resize(); draw();
 
-// Éclairs occasionnels
-function lightning() {
-  const f = $('flash');
-  f.animate([{ opacity: 0 }, { opacity: .18 }, { opacity: 0 }, { opacity: .1 }, { opacity: 0 }],
-            { duration: 700, easing: 'ease-out' });
-  if (audio) thunder();
-  setTimeout(lightning, 15000 + Math.random() * 25000);
-}
-setTimeout(lightning, 9000);
-
-// ---------- Bruit de pluie (généré en Web Audio, aucun fichier) ----------
+// ---------- Pluie de forêt calme (générée en Web Audio, aucun fichier) ----------
 let audio = null, master = null, on = false;
-function noiseBuffer(ac, seconds, brown) {
-  const len = ac.sampleRate * seconds, buf = ac.createBuffer(2, len, ac.sampleRate);
+function noiseBuffer(ac, seconds, type) {
+  const len = Math.floor(ac.sampleRate * seconds), buf = ac.createBuffer(2, len, ac.sampleRate);
   for (let c = 0; c < 2; c++) {
-    const d = buf.getChannelData(c); let last = 0;
+    const d = buf.getChannelData(c);
+    let last = 0, b0 = 0, b1 = 0, b2 = 0;
     for (let i = 0; i < len; i++) {
       const w = Math.random() * 2 - 1;
-      if (brown) { last = (last + 0.02 * w) / 1.02; d[i] = last * 3.5; } else d[i] = w;
+      if (type === 'brown') { last = (last + 0.02 * w) / 1.02; d[i] = last * 3.5; }
+      else if (type === 'pink') {
+        b0 = 0.99765 * b0 + w * 0.0990460; b1 = 0.96300 * b1 + w * 0.2965164;
+        b2 = 0.57000 * b2 + w * 1.0526913; d[i] = (b0 + b1 + b2 + w * 0.1848) * 0.12;
+      } else d[i] = w;
     }
   }
   return buf;
 }
+function loop(buf, ...nodes) {
+  const s = audio.createBufferSource(); s.buffer = buf; s.loop = true;
+  nodes.reduce((a, n) => a.connect(n), s).connect(master); s.start();
+}
+function filter(type, freq, q = 0.7) {
+  const f = audio.createBiquadFilter(); f.type = type; f.frequency.value = freq; f.Q.value = q; return f;
+}
+function gain(v) { const g = audio.createGain(); g.gain.value = v; return g; }
+function lfo(param, rate, depth) {
+  const o = audio.createOscillator(); o.frequency.value = rate;
+  const g = gain(depth); o.connect(g).connect(param); o.start();
+}
+
 function startAudio() {
   audio = new (window.AudioContext || window.webkitAudioContext)();
   master = audio.createGain(); master.gain.value = 0; master.connect(audio.destination);
 
-  // Nappe de pluie : bruit blanc filtré
-  const rain = audio.createBufferSource(); rain.buffer = noiseBuffer(audio, 4, false); rain.loop = true;
-  const hp = audio.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 400;
-  const lp = audio.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 6000;
-  const rg = audio.createGain(); rg.gain.value = 0.22;
-  rain.connect(hp).connect(lp).connect(rg).connect(master); rain.start();
+  // Pluie douce sur la canopée : bruit rose, aigus adoucis
+  const canopy = gain(0.35);
+  lfo(canopy.gain, 0.05, 0.08);                       // respiration lente de l'averse
+  loop(noiseBuffer(audio, 6, 'pink'), filter('highpass', 200), filter('lowpass', 2200), canopy);
 
-  // Grondement grave : bruit brun
-  const rumble = audio.createBufferSource(); rumble.buffer = noiseBuffer(audio, 4, true); rumble.loop = true;
-  const rl = audio.createBiquadFilter(); rl.type = 'lowpass'; rl.frequency.value = 300;
-  const rgn = audio.createGain(); rgn.gain.value = 0.5;
-  rumble.connect(rl).connect(rgn).connect(master); rumble.start();
+  // Vent léger dans les arbres
+  const windG = gain(0.25);
+  lfo(windG.gain, 0.03, 0.15);
+  const windF = filter('bandpass', 350, 0.6);
+  lfo(windF.frequency, 0.02, 120);
+  loop(noiseBuffer(audio, 8, 'brown'), windF, windG);
 
-  // Gouttes individuelles
-  const dropBuf = noiseBuffer(audio, 0.05, false);
-  (function plink() {
+  // Gouttes sur les feuilles : petits tapotements étouffés
+  const tapBuf = noiseBuffer(audio, 0.08, 'white');
+  (function patter() {
     const t = audio.currentTime;
-    const s = audio.createBufferSource(); s.buffer = dropBuf;
-    const bp = audio.createBiquadFilter(); bp.type = 'bandpass';
-    bp.frequency.value = 1500 + Math.random() * 4000; bp.Q.value = 4;
+    const s = audio.createBufferSource(); s.buffer = tapBuf;
     const g = audio.createGain();
-    g.gain.setValueAtTime(0.15 + Math.random() * 0.25, t);
-    g.gain.exponentialRampToValueAtTime(0.001, t + 0.04);
-    const pan = audio.createStereoPanner(); pan.pan.value = Math.random() * 2 - 1;
-    s.connect(bp).connect(g).connect(pan).connect(master); s.start(t);
-    setTimeout(plink, 10 + Math.random() * 60);
+    g.gain.setValueAtTime(0.03 + Math.random() * 0.06, t);
+    g.gain.exponentialRampToValueAtTime(0.0005, t + 0.06 + Math.random() * 0.05);
+    const pan = audio.createStereoPanner(); pan.pan.value = Math.random() * 1.6 - 0.8;
+    s.connect(filter('bandpass', 700 + Math.random() * 1800, 1.5)).connect(g).connect(pan).connect(master);
+    s.start(t);
+    setTimeout(patter, 40 + Math.random() * 160);
   })();
-}
-function thunder() {
-  if (!on) return;
-  const t = audio.currentTime + 0.3 + Math.random();
-  const s = audio.createBufferSource(); s.buffer = noiseBuffer(audio, 5, true);
-  const f = audio.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 180;
-  const g = audio.createGain();
-  g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(1.6, t + 0.15);
-  g.gain.exponentialRampToValueAtTime(0.001, t + 4.5);
-  s.connect(f).connect(g).connect(master); s.start(t);
+
+  // Grosses gouttes qui tombent des branches (« plic » d'eau)
+  (function drip() {
+    const t = audio.currentTime;
+    const o = audio.createOscillator(); o.type = 'sine';
+    const f0 = 900 + Math.random() * 900;
+    o.frequency.setValueAtTime(f0, t);
+    o.frequency.exponentialRampToValueAtTime(f0 * 1.8, t + 0.05);
+    const g = audio.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.04 + Math.random() * 0.04, t + 0.005);
+    g.gain.exponentialRampToValueAtTime(0.0005, t + 0.12);
+    const pan = audio.createStereoPanner(); pan.pan.value = Math.random() * 1.4 - 0.7;
+    o.connect(g).connect(pan).connect(master); o.start(t); o.stop(t + 0.15);
+    setTimeout(drip, 600 + Math.random() * 2600);
+  })();
+
+  // Oiseau lointain, de temps en temps
+  (function bird() {
+    setTimeout(() => {
+      const t0 = audio.currentTime, notes = 2 + Math.floor(Math.random() * 3);
+      const base = 2600 + Math.random() * 1200, pan = audio.createStereoPanner();
+      pan.pan.value = Math.random() * 1.6 - 0.8; pan.connect(master);
+      for (let i = 0; i < notes; i++) {
+        const t = t0 + i * (0.18 + Math.random() * 0.08);
+        const o = audio.createOscillator(); o.type = 'sine';
+        o.frequency.setValueAtTime(base, t);
+        o.frequency.exponentialRampToValueAtTime(base * (0.75 + Math.random() * 0.15), t + 0.12);
+        const g = audio.createGain();
+        g.gain.setValueAtTime(0, t);
+        g.gain.linearRampToValueAtTime(0.012, t + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.0003, t + 0.14);
+        o.connect(g).connect(pan); o.start(t); o.stop(t + 0.16);
+      }
+      bird();
+    }, 15000 + Math.random() * 25000);
+  })();
 }
 function setSound(v) {
   if (!audio) startAudio();
@@ -233,8 +264,8 @@ function setSound(v) {
   on = v;
   master.gain.cancelScheduledValues(audio.currentTime);
   master.gain.setValueAtTime(master.gain.value, audio.currentTime);
-  master.gain.linearRampToValueAtTime(v ? 0.8 : 0, audio.currentTime + 1.2);
-  $('sound').textContent = v ? '🔊 Pluie' : '🔇 Son coupé';
+  master.gain.linearRampToValueAtTime(v ? 0.7 : 0, audio.currentTime + 2.5);
+  $('sound').textContent = v ? '🔊 Forêt' : '🔇 Son coupé';
 }
 $('enter').addEventListener('click', () => { $('enter').classList.add('hidden'); setSound(true); });
 $('sound').addEventListener('click', () => setSound(!on));
